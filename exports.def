@@ -1,0 +1,4 @@
+LIBRARY	"MISVR"
+EXPORTS
+SKSEPlugin_Query
+SKSEPlugin_Load
