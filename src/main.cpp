@@ -9,10 +9,13 @@
 #include "skse64_common/SafeWrite.h"
 #include "skse64/NiNodes.h"
 #include "skse64/NiGeometry.h"
+#include "skse64/GameRTTI.h"
 
 #include <ShlObj.h>  // CSIDL_MYDOCUMENTS
 
 #include "version.h"
+#include "RE.h"
+#include "config.h"
 
 // SKSE globals
 static PluginHandle	g_pluginHandle = kPluginHandle_Invalid;
@@ -24,6 +27,7 @@ SKSETrampolineInterface *g_trampoline = nullptr;
 // Hook stuff
 uintptr_t postMagicNodeUpdateHookedFuncAddr = 0;
 uintptr_t postPCUpdateHookedFuncAddr = 0;
+uintptr_t postWandUpdateHookedFuncAddr = 0;
 
 auto postMagicNodeUpdateHookLoc = RelocAddr<uintptr_t>(0x6AC035);
 auto postMagicNodeUpdateHookedFunc = RelocAddr<uintptr_t>(0x398940);
@@ -31,12 +35,18 @@ auto postMagicNodeUpdateHookedFunc = RelocAddr<uintptr_t>(0x398940);
 auto postPlayerCharacterVRUpdateHookLoc = RelocAddr<uintptr_t>(0x6C6A18);
 auto postPlayerCharacterVRUpdateHookedFunc = RelocAddr<uintptr_t>(0xC9BC10);
 
+auto postWandUpdateHookLoc = RelocAddr<uintptr_t>(0x13233C7); // A call shortly after the wand nodes are updated as part of Main::Draw()
+auto postWandUpdateHookedFunc = RelocAddr<uintptr_t>(0xDCF900);
+
 
 typedef bool(*IAnimationGraphManagerHolder_GetGraphVariableInt)(IAnimationGraphManagerHolder *_this, const BSFixedString& a_variableName, SInt32& a_out);
 typedef bool(*IAnimationGraphManagerHolder_GetGraphVariableBool)(IAnimationGraphManagerHolder *_this, const BSFixedString& a_variableName, bool& a_out);
 
 typedef NiMatrix33 * (*_MatrixFromForwardVector)(NiMatrix33 *matOut, NiPoint3 *forward, NiPoint3 *world);
 RelocAddr<_MatrixFromForwardVector> MatrixFromForwardVector(0xC4C1E0);
+
+typedef float (*_Actor_GetActorValuePercentage)(Actor *_this, UInt32 actorValue);
+RelocAddr<_Actor_GetActorValuePercentage> Actor_GetActorValuePercentage(0x5DEB30);
 
 inline NiTransform InverseTransform(const NiTransform &t) { NiTransform inverse; t.Invert(inverse); return inverse; }
 inline float VectorLengthSquared(const NiPoint3 &vec) { return vec.x*vec.x + vec.y*vec.y + vec.z*vec.z; }
@@ -93,9 +103,16 @@ NiPoint3 RotateVectorByAxisAngle(const NiPoint3 &vector, const NiPoint3 &axis, f
 
 void SetGeometryScaleDownstream(std::unordered_map<NiAVObject *, float> &nodeScales, NiAVObject *root, float scale)
 {
-	BSGeometry *geom = root->GetAsBSTriShape();
+	BSTriShape *geom = root->GetAsBSTriShape();
 	if (geom && nodeScales.count(geom) != 0) {
 		geom->m_localTransform.scale = nodeScales[geom] * scale;
+		return;
+	}
+
+	NiParticleSystem *particles = DYNAMIC_CAST(root, NiAVObject, NiParticleSystem);
+	if (particles) {
+		particles->size *= scale;
+		return;
 	}
 
 	NiNode *node = root->GetAsNiNode();
@@ -109,11 +126,13 @@ void SetGeometryScaleDownstream(std::unordered_map<NiAVObject *, float> &nodeSca
 	}
 }
 
+/*
 void SaveGeometryScaleDownstream(std::unordered_map<NiAVObject *, float> &nodeScales, NiAVObject *root)
 {
-	BSGeometry *geom = root->GetAsBSTriShape();
+	BSTriShape *geom = root->GetAsBSTriShape();
 	if (geom) {
 		nodeScales[geom] = geom->m_localTransform.scale;
+		return;
 	}
 
 	NiNode *node = root->GetAsNiNode();
@@ -126,12 +145,14 @@ void SaveGeometryScaleDownstream(std::unordered_map<NiAVObject *, float> &nodeSc
 		}
 	}
 }
+*/
 
 void RestoreGeometryScaleDownstream(std::unordered_map<NiAVObject *, float> &nodeScales, NiAVObject *root)
 {
-	BSGeometry *geom = root->GetAsBSTriShape();
+	BSTriShape *geom = root->GetAsBSTriShape();
 	if (geom && nodeScales.count(geom) != 0) {
 		geom->m_localTransform.scale = nodeScales[geom];
+		return;
 	}
 
 	NiNode *node = root->GetAsNiNode();
@@ -140,6 +161,34 @@ void RestoreGeometryScaleDownstream(std::unordered_map<NiAVObject *, float> &nod
 			NiAVObject *child = node->m_children.m_data[i];
 			if (child) {
 				RestoreGeometryScaleDownstream(nodeScales, child);
+			}
+		}
+	}
+}
+
+void SetGeometryScaleDownstreamAndSaveIfNew(std::unordered_map<NiAVObject *, float> &nodeScales, NiAVObject *root, float scale)
+{
+	BSTriShape *geom = root->GetAsBSTriShape();
+	if (geom) {
+		if (nodeScales.count(geom) == 0) { // Not in the map yet
+			nodeScales[geom] = geom->m_localTransform.scale;
+		}
+		geom->m_localTransform.scale = nodeScales[geom] * scale;
+		return;
+	}
+
+	NiParticleSystem *particles = DYNAMIC_CAST(root, NiAVObject, NiParticleSystem);
+	if (particles) {
+		particles->size *= scale;
+		return;
+	}
+
+	NiNode *node = root->GetAsNiNode();
+	if (node) {
+		for (int i = 0; i < node->m_children.m_emptyRunStart; i++) {
+			NiAVObject *child = node->m_children.m_data[i];
+			if (child) {
+				SetGeometryScaleDownstreamAndSaveIfNew(nodeScales, child, scale);
 			}
 		}
 	}
@@ -160,11 +209,12 @@ SavedState savedState;
 
 std::unordered_map<NiAVObject *, float> primaryNodeScales;
 std::unordered_map<NiAVObject *, float> secondaryNodeScales;
+//std::unordered_map<NiAVObject *, float> dualCastNodeScales;
 
 
 // TODO:
-// - Do node scales based on magicka percentage
-// - Add config options for things: left/right/combined hand vectors for dualcast spell direction, min/max scale while dual casting along with hand-hand distance to scale over.
+// Charging up a spell, then sheathing while charged + unsheathing makes the spell larger. Probably due to the scale being maintained by the game, but with a new node created so it doesn't appear in our map and we save the larger scale or something.
+// Steadfast ward had some wierdness with either the left offset or aim node getting stuck in an offset suspiciously close to between the two hands.
 
 void PostMagicNodeUpdateHook()
 {
@@ -184,12 +234,12 @@ void PostMagicNodeUpdateHook()
 	NiPoint3 midpoint = lerp(secondaryMagicOffsetNode->m_worldTransform.pos, primaryMagicOffsetNode->m_worldTransform.pos, 0.5f);
 
 	if (state == DualCastState::Idle) {
-		if (isDualCasting) {//if (hasStartedDualCasting) {
+		if (isDualCasting) {
 			savedState.secondaryMagicAimNodeLocalTransform = secondaryMagicAimNode->m_localTransform;
 			savedState.secondaryMagicOffsetNodeLocalTransform = secondaryMagicOffsetNode->m_localTransform;
 
-			secondaryNodeScales.clear();
-			SaveGeometryScaleDownstream(secondaryNodeScales, secondaryMagicOffsetNode);
+			//dualCastNodeScales.clear();
+			//SaveGeometryScaleDownstream(dualCastNodeScales, secondaryMagicOffsetNode);
 
 			savedState.currentDualCastScale = 1.f;
 
@@ -203,6 +253,7 @@ void PostMagicNodeUpdateHook()
 			CALL_MEMBER_FN(secondaryMagicAimNode, UpdateNode)(&ctx);
 
 			secondaryMagicOffsetNode->m_localTransform = savedState.secondaryMagicOffsetNodeLocalTransform;
+			//RestoreGeometryScaleDownstream(dualCastNodeScales, secondaryMagicOffsetNode);
 			RestoreGeometryScaleDownstream(secondaryNodeScales, secondaryMagicOffsetNode);
 			CALL_MEMBER_FN(secondaryMagicOffsetNode, UpdateNode)(&ctx);
 
@@ -215,7 +266,9 @@ void PostMagicNodeUpdateHook()
 				transform.pos = midpoint;
 
 				float distanceBetweenHands = VectorLength(secondaryMagicOffsetNode->m_worldTransform.pos - primaryMagicOffsetNode->m_worldTransform.pos);
-				float scale = std::clamp(1.f + distanceBetweenHands / 90.f, 1.f, 2.f);
+				float minScale = Config::options.dualCastMinSpellScale;
+				float maxScale = Config::options.dualCastMaxSpellScale;
+				float scale = std::clamp(minScale + distanceBetweenHands / Config::options.dualCastHandSeparationScalingDistance, minScale, maxScale);
 				savedState.currentDualCastScale = scale;
 
 				UpdateNodeTransformLocal(secondaryMagicOffsetNode, transform);
@@ -241,13 +294,25 @@ void PostMagicNodeUpdateHook()
 				NiAVObject::ControllerUpdateContext ctx{ 0, 0 };
 				CALL_MEMBER_FN(secondaryMagicAimNode, UpdateNode)(&ctx);
 
-				// TODO: Maybe just a lerp is enough?
-				NiPoint3 secondaryForward = ForwardVector(secondaryMagicAimNode->m_worldTransform.rot);
-				NiPoint3 primaryForward = ForwardVector(primaryMagicAimNode->m_worldTransform.rot);
-				float angle = acosf(std::clamp(DotProduct(primaryForward, secondaryForward), -1.f, 1.f));
-				NiPoint3 axis = VectorNormalized(CrossProduct(primaryForward, secondaryForward));
+				NiPoint3 forward;
+				if (Config::options.useMainHandForDualCastAiming && !Config::options.useOffHandForDualCastAiming) {
+					// Main hand only
+					forward = ForwardVector(primaryMagicAimNode->m_worldTransform.rot);
+				}
+				else if (Config::options.useOffHandForDualCastAiming && !Config::options.useMainHandForDualCastAiming) {
+					// Offhand only
+					forward = ForwardVector(secondaryMagicAimNode->m_worldTransform.rot);
+				}
+				else {
+					// Combine both hands
+					// TODO: Maybe just a lerp is close enough?
+					NiPoint3 secondaryForward = ForwardVector(secondaryMagicAimNode->m_worldTransform.rot);
+					NiPoint3 primaryForward = ForwardVector(primaryMagicAimNode->m_worldTransform.rot);
+					float angle = acosf(std::clamp(DotProduct(primaryForward, secondaryForward), -1.f, 1.f)); // clamp input of acos to be safe
+					NiPoint3 axis = VectorNormalized(CrossProduct(primaryForward, secondaryForward));
 
-				NiPoint3 forward = RotateVectorByAxisAngle(primaryForward, axis, angle * 0.5f);
+					forward = RotateVectorByAxisAngle(primaryForward, axis, angle * 0.5f);
+				}
 
 				NiMatrix33 rot;
 				NiPoint3 worldUp = { 0, 0, 1 };
@@ -276,25 +341,40 @@ void PostPlayerCharacterVRUpdateHook()
 
 	if (!secondaryMagicOffsetNode || !primaryMagicOffsetNode) return;
 
+	float minScale = Config::options.spellScaleWhenMagickaEmpty;
+	float maxScale = Config::options.spellScaleWhenMagickaFull;
+
+	// ActorValue ids:
+	// - health is 24
+	// - magicka is 25
+	// - stamina is 26
+	float magickaPercentage = Actor_GetActorValuePercentage(player, 25);
+	_MESSAGE("Magicka percent: %.2f", magickaPercentage);
+	float magickaScale = minScale + (maxScale - minScale) * magickaPercentage;
+
 	if (state == DualCastState::Idle) {
-		/*
 		// Secondary offset node update
 		{
+			SetGeometryScaleDownstreamAndSaveIfNew(secondaryNodeScales, secondaryMagicOffsetNode, magickaScale);
 			NiAVObject::ControllerUpdateContext ctx{ 0, 0 };
 			CALL_MEMBER_FN(secondaryMagicOffsetNode, UpdateNode)(&ctx);
 		}
 
 		// Primary offset node update
 		{
+			SetGeometryScaleDownstreamAndSaveIfNew(primaryNodeScales, primaryMagicOffsetNode, magickaScale);
 			NiAVObject::ControllerUpdateContext ctx{ 0, 0 };
 			CALL_MEMBER_FN(primaryMagicOffsetNode, UpdateNode)(&ctx);
 		}
-		*/
+
+		_MESSAGE("%d\t%d", secondaryNodeScales.size(), primaryNodeScales.size());
 	}
 	if (state == DualCastState::Cast) {
 		// Secondary offset node update
 		{
-			SetGeometryScaleDownstream(secondaryNodeScales, secondaryMagicOffsetNode, savedState.currentDualCastScale);
+			float scale = magickaScale * savedState.currentDualCastScale;
+			//SetGeometryScaleDownstreamAndSaveIfNew(dualCastNodeScales, secondaryMagicOffsetNode, scale);
+			SetGeometryScaleDownstreamAndSaveIfNew(secondaryNodeScales, secondaryMagicOffsetNode, scale);
 
 			NiAVObject::ControllerUpdateContext ctx{ 0, 0 };
 			CALL_MEMBER_FN(secondaryMagicOffsetNode, UpdateNode)(&ctx);
@@ -307,6 +387,7 @@ void PerformHooks()
 {
 	postMagicNodeUpdateHookedFuncAddr = postMagicNodeUpdateHookedFunc.GetUIntPtr();
 	postPCUpdateHookedFuncAddr = postPlayerCharacterVRUpdateHookedFunc.GetUIntPtr();
+	postWandUpdateHookedFuncAddr = postWandUpdateHookedFunc.GetUIntPtr();
 
 	{
 		struct Code : Xbyak::CodeGenerator {
@@ -525,6 +606,13 @@ extern "C" {
 	bool SKSEPlugin_Load(const SKSEInterface * skse)
 	{	// Called by SKSE to load this plugin
 		_MESSAGE("MISVR loaded");
+
+		if (Config::ReadConfigOptions()) {
+			_MESSAGE("Successfully read config parameters");
+		}
+		else {
+			_WARNING("[WARNING] Failed to read config options. Using defaults instead.");
+		}
 
 		_MESSAGE("Registering for SKSE messages");
 		g_messaging = (SKSEMessagingInterface*)skse->QueryInterface(kInterface_Messaging);
