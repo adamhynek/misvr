@@ -162,10 +162,12 @@
   <ItemGroup>
     <ClCompile Include="src\config.cpp" />
     <ClCompile Include="src\main.cpp" />
+    <ClCompile Include="src\utils.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\config.h" />
     <ClInclude Include="src\RE.h" />
+    <ClInclude Include="src\utils.h" />
     <ClInclude Include="src\version.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
