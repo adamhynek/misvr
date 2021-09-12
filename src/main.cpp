@@ -3,18 +3,12 @@
 #include "skse64/PluginAPI.h"  // SKSEInterface, PluginInfo
 #include "xbyak/xbyak.h"
 #include "skse64_common/BranchTrampoline.h"
-#include "skse64/PapyrusEvents.h"
-#include "skse64/GameData.h"
-#include "skse64_common/SafeWrite.h"
-#include "skse64/NiNodes.h"
-#include "skse64/NiGeometry.h"
-#include "skse64/GameRTTI.h"
 
 #include <ShlObj.h>  // CSIDL_MYDOCUMENTS
 
 #include "version.h"
-#include "RE.h"
 #include "config.h"
+#include "RE.h"
 #include "utils.h"
 
 
@@ -22,13 +16,11 @@
 static PluginHandle	g_pluginHandle = kPluginHandle_Invalid;
 static SKSEMessagingInterface *g_messaging = nullptr;
 
-SKSEVRInterface *g_vrInterface = nullptr;
 SKSETrampolineInterface *g_trampoline = nullptr;
 
 // Hook stuff
 uintptr_t postMagicNodeUpdateHookedFuncAddr = 0;
 uintptr_t postPCUpdateHookedFuncAddr = 0;
-uintptr_t postWandUpdateHookedFuncAddr = 0;
 
 auto postMagicNodeUpdateHookLoc = RelocAddr<uintptr_t>(0x6AC035);
 auto postMagicNodeUpdateHookedFunc = RelocAddr<uintptr_t>(0x398940);
@@ -36,15 +28,18 @@ auto postMagicNodeUpdateHookedFunc = RelocAddr<uintptr_t>(0x398940);
 auto postPlayerCharacterVRUpdateHookLoc = RelocAddr<uintptr_t>(0x6C6A18);
 auto postPlayerCharacterVRUpdateHookedFunc = RelocAddr<uintptr_t>(0xC9BC10);
 
-auto postWandUpdateHookLoc = RelocAddr<uintptr_t>(0x13233C7); // A call shortly after the wand nodes are updated as part of Main::Draw()
-auto postWandUpdateHookedFunc = RelocAddr<uintptr_t>(0xDCF900);
-
 // Couple of functions we use from the exe
 typedef NiMatrix33 * (*_MatrixFromForwardVector)(NiMatrix33 *matOut, NiPoint3 *forward, NiPoint3 *world);
 RelocAddr<_MatrixFromForwardVector> MatrixFromForwardVector(0xC4C1E0);
 
 typedef float(*_Actor_GetActorValuePercentage)(Actor *_this, UInt32 actorValue);
 RelocAddr<_Actor_GetActorValuePercentage> Actor_GetActorValuePercentage(0x5DEB30);
+
+typedef NiMatrix33 * (*_EulerToMatrix)(NiMatrix33 *out, float pitch, float roll, float yaw);
+RelocAddr<_EulerToMatrix> EulerToMatrix(0xC995A0);
+inline NiMatrix33 EulerToNiMatrix(float pitch, float roll, float yaw) { NiMatrix33 out; EulerToMatrix(&out, pitch, roll, yaw); return out; }
+
+RelocPtr<float> fMagicRotationPitch(0x1EAEB00);
 
 
 enum class DualCastState {
@@ -84,6 +79,26 @@ void PostMagicNodeUpdateHook()
 
 	NiPoint3 midpoint = lerp(secondaryMagicOffsetNode->m_worldTransform.pos, primaryMagicOffsetNode->m_worldTransform.pos, 0.5f);
 
+	// First, apply user-supplied roll/yaw aim values, as the base game does not support these
+	bool isLeftHanded = *g_leftHandedMode;
+	NiAVObject *leftAimNode = isLeftHanded ? primaryMagicAimNode : secondaryMagicAimNode;
+	NiAVObject *rightAimNode = isLeftHanded ? secondaryMagicAimNode : primaryMagicAimNode;
+	{
+		NiPoint3 euler = { *fMagicRotationPitch, Config::options.magicRotationRoll, Config::options.magicRotationYaw };
+		euler *= 0.017453292;
+		rightAimNode->m_localTransform.rot = EulerToNiMatrix(euler.x, euler.y, euler.z);
+		NiAVObject::ControllerUpdateContext ctx{ 0, 0 };
+		CALL_MEMBER_FN(rightAimNode, UpdateNode)(&ctx);
+	}
+	{
+		NiPoint3 euler = { *fMagicRotationPitch, -Config::options.magicRotationRoll, -Config::options.magicRotationYaw };
+		euler *= 0.017453292;
+		leftAimNode->m_localTransform.rot = EulerToNiMatrix(euler.x, euler.y, euler.z);
+		NiAVObject::ControllerUpdateContext ctx{ 0, 0 };
+		CALL_MEMBER_FN(leftAimNode, UpdateNode)(&ctx);
+	}
+
+	// Dualcast state updates
 	if (state == DualCastState::Idle) {
 		if (isDualCasting) {
 			savedState.secondaryMagicAimNodeLocalTransform = secondaryMagicAimNode->m_localTransform;
@@ -257,7 +272,6 @@ void PerformHooks()
 {
 	postMagicNodeUpdateHookedFuncAddr = postMagicNodeUpdateHookedFunc.GetUIntPtr();
 	postPCUpdateHookedFuncAddr = postPlayerCharacterVRUpdateHookedFunc.GetUIntPtr();
-	postWandUpdateHookedFuncAddr = postWandUpdateHookedFunc.GetUIntPtr();
 
 	{
 		struct Code : Xbyak::CodeGenerator {

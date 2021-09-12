@@ -14,6 +14,9 @@ namespace Config {
 		float spellScaleWhenMagickaEmpty = 0.35f;
 		float spellScaleWhenMagickaFull = 1.f;
 
+		float magicRotationRoll = 0.f;
+		float magicRotationYaw = 0.f;
+
 		bool useOffHandForDualCastAiming = false;
 		bool useMainHandForDualCastAiming = false;
 	};

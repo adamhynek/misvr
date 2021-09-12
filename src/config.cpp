@@ -78,6 +78,9 @@ namespace Config {
 		if (!ReadFloat("SpellScaleWhenMagickaEmpty", options.spellScaleWhenMagickaEmpty)) return false;
 		if (!ReadFloat("SpellScaleWhenMagickaFull", options.spellScaleWhenMagickaFull)) return false;
 
+		if (!ReadFloat("MagicRotationRoll", options.magicRotationRoll)) return false;
+		if (!ReadFloat("MagicRotationYaw", options.magicRotationYaw)) return false;
+
 		if (!ReadBool("UseOffHandForDualCastAiming", options.useOffHandForDualCastAiming)) return false;
 		if (!ReadBool("UseMainHandForDualCastAiming", options.useMainHandForDualCastAiming)) return false;
 
