@@ -35,9 +35,9 @@ RelocAddr<_MatrixFromForwardVector> MatrixFromForwardVector(0xC4C1E0);
 typedef float(*_Actor_GetActorValuePercentage)(Actor *_this, UInt32 actorValue);
 RelocAddr<_Actor_GetActorValuePercentage> Actor_GetActorValuePercentage(0x5DEB30);
 
-typedef NiMatrix33 * (*_EulerToMatrix)(NiMatrix33 *out, float pitch, float roll, float yaw);
-RelocAddr<_EulerToMatrix> EulerToMatrix(0xC995A0);
-inline NiMatrix33 EulerToNiMatrix(float pitch, float roll, float yaw) { NiMatrix33 out; EulerToMatrix(&out, pitch, roll, yaw); return out; }
+typedef NiMatrix33 * (*_EulerToNiMatrix)(NiMatrix33 *out, float pitch, float roll, float yaw);
+RelocAddr<_EulerToNiMatrix> EulerToNiMatrix(0xC995A0);
+inline NiMatrix33 EulerToMatrix(float pitch, float roll, float yaw) { NiMatrix33 out; EulerToNiMatrix(&out, pitch, roll, yaw); return out; }
 
 RelocPtr<float> fMagicRotationPitch(0x1EAEB00);
 
@@ -69,7 +69,6 @@ void PostMagicNodeUpdateHook()
 	PlayerCharacter *player = *g_thePlayer;
 	if (!player->GetNiNode()) return;
 
-	bool isDualCasting = IsDualCasting(player);
 	NiPointer<NiAVObject> secondaryMagicAimNode = player->unk3F0[PlayerCharacter::Node::kNode_SecondaryMagicAimNode];
 	NiPointer<NiAVObject> primaryMagicAimNode = player->unk3F0[PlayerCharacter::Node::kNode_PrimaryMagicAimNode];
 	NiPointer<NiAVObject> secondaryMagicOffsetNode = player->unk3F0[PlayerCharacter::Node::kNode_SecondaryMagicOffsetNode];
@@ -79,21 +78,39 @@ void PostMagicNodeUpdateHook()
 
 	NiPoint3 midpoint = lerp(secondaryMagicOffsetNode->m_worldTransform.pos, primaryMagicOffsetNode->m_worldTransform.pos, 0.5f);
 
-	// First, apply user-supplied roll/yaw aim values, as the base game does not support these
+	// First, apply user-supplied roll/yaw aim values while casting, as the base game does not support these.
 	bool isLeftHanded = *g_leftHandedMode;
+
 	NiAVObject *leftAimNode = isLeftHanded ? primaryMagicAimNode : secondaryMagicAimNode;
 	NiAVObject *rightAimNode = isLeftHanded ? secondaryMagicAimNode : primaryMagicAimNode;
+
+	bool isDualCasting = IsDualCasting(player);
+
+	bool isCastingPrimary = IsCastingRight(player);
+	bool isCastingSecondary = IsCastingLeft(player);
+	bool isCastingLeft = isLeftHanded ? isCastingPrimary : isCastingSecondary;
+	bool isCastingRight = isLeftHanded ? isCastingSecondary : isCastingPrimary;
+
 	{
-		NiPoint3 euler = { *fMagicRotationPitch, Config::options.magicRotationRoll, Config::options.magicRotationYaw };
+		NiPoint3 euler = { *fMagicRotationPitch, 0.f, 0.f };
+		if (isCastingRight || isDualCasting) {
+			 euler.y = Config::options.magicRotationRoll;
+			 euler.z = Config::options.magicRotationYaw;
+		}
 		euler *= 0.017453292;
-		rightAimNode->m_localTransform.rot = EulerToNiMatrix(euler.x, euler.y, euler.z);
+		rightAimNode->m_localTransform.rot = EulerToMatrix(euler.x, euler.y, euler.z);
 		NiAVObject::ControllerUpdateContext ctx{ 0, 0 };
 		CALL_MEMBER_FN(rightAimNode, UpdateNode)(&ctx);
 	}
+
 	{
-		NiPoint3 euler = { *fMagicRotationPitch, -Config::options.magicRotationRoll, -Config::options.magicRotationYaw };
+		NiPoint3 euler = { *fMagicRotationPitch, 0.f, 0.f };
+		if (isCastingLeft || isDualCasting) {
+			euler.y = -Config::options.magicRotationRoll;
+			euler.z = -Config::options.magicRotationYaw;
+		}
 		euler *= 0.017453292;
-		leftAimNode->m_localTransform.rot = EulerToNiMatrix(euler.x, euler.y, euler.z);
+		leftAimNode->m_localTransform.rot = EulerToMatrix(euler.x, euler.y, euler.z);
 		NiAVObject::ControllerUpdateContext ctx{ 0, 0 };
 		CALL_MEMBER_FN(leftAimNode, UpdateNode)(&ctx);
 	}

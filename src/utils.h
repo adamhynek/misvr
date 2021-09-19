@@ -20,6 +20,9 @@ NiPoint3 CrossProduct(const NiPoint3 &vec1, const NiPoint3 &vec2);
 NiPoint3 RotateVectorByAxisAngle(const NiPoint3 &vector, const NiPoint3 &axis, float angle);
 
 void UpdateNodeTransformLocal(NiAVObject *node, const NiTransform &worldTransform);
+bool GetAnimVariableBool(Actor *actor, BSFixedString &variableName);
+bool IsCastingRight(Actor *actor);
+bool IsCastingLeft(Actor *actor);
 bool IsDualCasting(Actor *actor);
 SpellItem *GetEquippedSpell(Actor *actor, bool isOffhand);
 
