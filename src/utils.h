@@ -26,5 +26,4 @@ bool IsCastingLeft(Actor *actor);
 bool IsDualCasting(Actor *actor);
 SpellItem *GetEquippedSpell(Actor *actor, bool isOffhand);
 
-void SetParticleScaleDownstream(std::unordered_map<NiAVObject *, float> &nodeScales, NiAVObject *root, float scale);
-void RestoreParticleScaleDownstream(std::unordered_map<NiAVObject *, float> &nodeScales, NiAVObject *root);
+void SetParticleScaleDownstream(NiAVObject *root, float scale);

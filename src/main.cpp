@@ -20,13 +20,13 @@ SKSETrampolineInterface *g_trampoline = nullptr;
 
 // Hook stuff
 uintptr_t postMagicNodeUpdateHookedFuncAddr = 0;
-uintptr_t postPCUpdateHookedFuncAddr = 0;
+uintptr_t postWandUpdateHookedFuncAddr = 0;
 
 auto postMagicNodeUpdateHookLoc = RelocAddr<uintptr_t>(0x6AC035);
 auto postMagicNodeUpdateHookedFunc = RelocAddr<uintptr_t>(0x398940);
 
-auto postPlayerCharacterVRUpdateHookLoc = RelocAddr<uintptr_t>(0x6C6A18);
-auto postPlayerCharacterVRUpdateHookedFunc = RelocAddr<uintptr_t>(0xC9BC10);
+auto postWandUpdateHookLoc = RelocAddr<uintptr_t>(0x13233C7); // A call shortly after the wand nodes are updated as part of Main::Draw()
+auto postWandUpdateHookedFunc = RelocAddr<uintptr_t>(0xDCF900);
 
 // Couple of functions we use from the exe
 typedef NiMatrix33 * (*_MatrixFromForwardVector)(NiMatrix33 *matOut, NiPoint3 *forward, NiPoint3 *world);
@@ -54,9 +54,6 @@ struct SavedState {
 	float currentDualCastScale;
 };
 SavedState savedState;
-
-std::unordered_map<NiAVObject *, float> primaryNodeScales;
-std::unordered_map<NiAVObject *, float> secondaryNodeScales;
 
 SpellItem *currentMainHandSpell = nullptr;
 SpellItem *currentOffHandSpell = nullptr;
@@ -132,7 +129,6 @@ void PostMagicNodeUpdateHook()
 			CALL_MEMBER_FN(secondaryMagicAimNode, UpdateNode)(&ctx);
 
 			secondaryMagicOffsetNode->m_localTransform = savedState.secondaryMagicOffsetNodeLocalTransform;
-			RestoreParticleScaleDownstream(secondaryNodeScales, secondaryMagicOffsetNode);
 			CALL_MEMBER_FN(secondaryMagicOffsetNode, UpdateNode)(&ctx);
 
 			state = DualCastState::Idle;
@@ -207,34 +203,16 @@ void PostMagicNodeUpdateHook()
 	}
 }
 
-void PostPlayerCharacterVRUpdateHook()
+
+void PostWandUpdateHook()
 {
-	// Do scale overrides in this hook which is after vrik has done its scale modifications.
+	// Do scale overrides in this hook, which is after the last time the wand nodes have their world transforms updated.
+	// This allows us to set the scale of the magic offset node world transforms without them getting overwritten.
 
 	PlayerCharacter *player = *g_thePlayer;
 	if (!player->GetNiNode()) return;
-
-	SpellItem *mainHandSpell = GetEquippedSpell(player, false);
-	SpellItem *offHandSpell = GetEquippedSpell(player, true);
-
-	bool isSheathed = !player->actorState.IsWeaponDrawn();
-	if (isSheathed) {
-		mainHandSpell = nullptr;
-		offHandSpell = nullptr;
-	}
-
-	if (mainHandSpell != currentMainHandSpell) {
-		// Switched spells -> reset node scales for that hand
-		if (primaryNodeScales.size() > 0) primaryNodeScales.clear();
-		currentMainHandSpell = mainHandSpell;
-	}
-	if (offHandSpell != currentOffHandSpell) {
-		// Switched spells -> reset node scales for that hand
-		if (secondaryNodeScales.size() > 0) secondaryNodeScales.clear();
-		currentOffHandSpell = offHandSpell;
-	}
-
-	if (isSheathed) {
+	
+	if (!player->actorState.IsWeaponDrawn()) {
 		// Just don't mess with anything while sheathed
 		return;
 	}
@@ -256,31 +234,13 @@ void PostPlayerCharacterVRUpdateHook()
 	float magickaScale = minScale + (maxScale - minScale) * magickaPercentage;
 
 	if (state == DualCastState::Idle) {
-		// Secondary offset node update
-		{
-			SetParticleScaleDownstream(secondaryNodeScales, secondaryMagicOffsetNode, magickaScale);
-			NiAVObject::ControllerUpdateContext ctx{ 0, 0 };
-			CALL_MEMBER_FN(secondaryMagicOffsetNode, UpdateNode)(&ctx);
-		}
-
-		// Primary offset node update
-		{
-			SetParticleScaleDownstream(primaryNodeScales, primaryMagicOffsetNode, magickaScale);
-			NiAVObject::ControllerUpdateContext ctx{ 0, 0 };
-			CALL_MEMBER_FN(primaryMagicOffsetNode, UpdateNode)(&ctx);
-		}
-
-		//_MESSAGE("%d\t%d", secondaryNodeScales.size(), primaryNodeScales.size());
+		SetParticleScaleDownstream(secondaryMagicOffsetNode, magickaScale);
+		SetParticleScaleDownstream(primaryMagicOffsetNode, magickaScale);
 	}
 	if (state == DualCastState::Cast) {
 		// Secondary offset node update
-		{
-			float scale = magickaScale * savedState.currentDualCastScale;
-			SetParticleScaleDownstream(secondaryNodeScales, secondaryMagicOffsetNode, scale);
-
-			NiAVObject::ControllerUpdateContext ctx{ 0, 0 };
-			CALL_MEMBER_FN(secondaryMagicOffsetNode, UpdateNode)(&ctx);
-		}
+		float scale = magickaScale * savedState.currentDualCastScale;
+		SetParticleScaleDownstream(secondaryMagicOffsetNode, scale);
 	}
 }
 
@@ -288,7 +248,7 @@ void PostPlayerCharacterVRUpdateHook()
 void PerformHooks()
 {
 	postMagicNodeUpdateHookedFuncAddr = postMagicNodeUpdateHookedFunc.GetUIntPtr();
-	postPCUpdateHookedFuncAddr = postPlayerCharacterVRUpdateHookedFunc.GetUIntPtr();
+	postWandUpdateHookedFuncAddr = postWandUpdateHookedFunc.GetUIntPtr();
 
 	{
 		struct Code : Xbyak::CodeGenerator {
@@ -373,7 +333,7 @@ void PerformHooks()
 				movsd(ptr[rsp + 0x50], xmm5);
 
 				// Call our hook
-				mov(rax, (uintptr_t)PostPlayerCharacterVRUpdateHook);
+				mov(rax, (uintptr_t)PostWandUpdateHook);
 				call(rax);
 
 				movsd(xmm0, ptr[rsp]);
@@ -392,14 +352,14 @@ void PerformHooks()
 				pop(rax);
 
 				// Original code
-				mov(rax, postPCUpdateHookedFuncAddr);
+				mov(rax, postWandUpdateHookedFuncAddr);
 				call(rax);
 
 				// Jump back to whence we came (+ the size of the initial branch instruction)
 				jmp(ptr[rip + jumpBack]);
 
 				L(jumpBack);
-				dq(postPlayerCharacterVRUpdateHookLoc.GetUIntPtr() + 5);
+				dq(postWandUpdateHookLoc.GetUIntPtr() + 5);
 			}
 		};
 
@@ -407,9 +367,9 @@ void PerformHooks()
 		Code code(codeBuf);
 		g_localTrampoline.EndAlloc(code.getCurr());
 
-		g_branchTrampoline.Write5Branch(postPlayerCharacterVRUpdateHookLoc.GetUIntPtr(), uintptr_t(code.getCode()));
+		g_branchTrampoline.Write5Branch(postWandUpdateHookLoc.GetUIntPtr(), uintptr_t(code.getCode()));
 
-		_MESSAGE("Post PlayerCharacter::VRUpdate hook complete");
+		_MESSAGE("Post Wand Update hook complete");
 	}
 }
 

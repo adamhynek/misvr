@@ -64,14 +64,13 @@ NiPoint3 RotateVectorByAxisAngle(const NiPoint3 &vector, const NiPoint3 &axis, f
 }
 
 
-void SetParticleScaleDownstream(std::unordered_map<NiAVObject *, float> &nodeScales, NiAVObject *root, float scale)
+void SetParticleScaleDownstream(NiAVObject *root, float scale)
 {
 	BSTriShape *geom = root->GetAsBSTriShape();
 	if (geom) {
-		if (nodeScales.count(geom) == 0) { // Not in the map yet
-			nodeScales[geom] = geom->m_localTransform.scale;
-		}
-		geom->m_localTransform.scale = nodeScales[geom] * scale;
+		// Normally, we'd need to set the local transform and update,
+		// but as long as this is called after any update calls to this node, we can set the world transform directly.
+		geom->m_worldTransform.scale *= scale;
 		return;
 	}
 
@@ -86,26 +85,7 @@ void SetParticleScaleDownstream(std::unordered_map<NiAVObject *, float> &nodeSca
 		for (int i = 0; i < node->m_children.m_emptyRunStart; i++) {
 			NiAVObject *child = node->m_children.m_data[i];
 			if (child) {
-				SetParticleScaleDownstream(nodeScales, child, scale);
-			}
-		}
-	}
-}
-
-void RestoreParticleScaleDownstream(std::unordered_map<NiAVObject *, float> &nodeScales, NiAVObject *root)
-{
-	BSTriShape *geom = root->GetAsBSTriShape();
-	if (geom && nodeScales.count(geom) != 0) {
-		geom->m_localTransform.scale = nodeScales[geom];
-		return;
-	}
-
-	NiNode *node = root->GetAsNiNode();
-	if (node) {
-		for (int i = 0; i < node->m_children.m_emptyRunStart; i++) {
-			NiAVObject *child = node->m_children.m_data[i];
-			if (child) {
-				RestoreParticleScaleDownstream(nodeScales, child);
+				SetParticleScaleDownstream(child, scale);
 			}
 		}
 	}
