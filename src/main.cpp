@@ -5,6 +5,7 @@
 #include "skse64_common/BranchTrampoline.h"
 
 #include <ShlObj.h>  // CSIDL_MYDOCUMENTS
+#include <deque>
 
 #include "version.h"
 #include "config.h"
@@ -50,7 +51,6 @@ DualCastState state = DualCastState::Idle;
 
 struct SavedState {
 	NiTransform secondaryMagicOffsetNodeLocalTransform;
-	NiTransform secondaryMagicAimNodeLocalTransform;
 	float currentDualCastScale;
 };
 SavedState savedState;
@@ -58,6 +58,22 @@ SavedState savedState;
 SpellItem *currentMainHandSpell = nullptr;
 SpellItem *currentOffHandSpell = nullptr;
 
+std::deque<NiPoint3> g_primaryAimVectors{ 100, NiPoint3() };
+std::deque<NiPoint3> g_secondaryAimVectors{ 100, NiPoint3() };
+NiPoint3 GetSmoothedVector(std::deque<NiPoint3> &vectors, int numFrames)
+{
+	NiPoint3 smoothedVector = NiPoint3();
+
+	int i = 0;
+	for (NiPoint3 &vector : vectors) {
+		smoothedVector += vector;
+		if (++i >= numFrames) {
+			break;
+		}
+	}
+
+	return VectorNormalized(smoothedVector);
+}
 
 void PostMagicNodeUpdateHook()
 {
@@ -75,7 +91,6 @@ void PostMagicNodeUpdateHook()
 
 	NiPoint3 midpoint = lerp(secondaryMagicOffsetNode->m_worldTransform.pos, primaryMagicOffsetNode->m_worldTransform.pos, 0.5f);
 
-	// First, apply user-supplied roll/yaw aim values while casting, as the base game does not support these.
 	bool isLeftHanded = *g_leftHandedMode;
 
 	NiAVObject *leftAimNode = isLeftHanded ? primaryMagicAimNode : secondaryMagicAimNode;
@@ -91,7 +106,9 @@ void PostMagicNodeUpdateHook()
 
 	bool isDualCasting = IsDualCasting(player) || (isTwoHandedSpell && isCastingRight && isCastingLeft);
 
-	{
+	// First, apply user-supplied roll/yaw aim values while casting, as the base game does not support these.
+
+	{ // Update right magic aim node with additional rotation values
 		NiPoint3 euler = { *fMagicRotationPitch, 0.f, 0.f };
 		if (isCastingRight || isDualCasting) {
 			 euler.y = Config::options.magicRotationRoll;
@@ -103,7 +120,7 @@ void PostMagicNodeUpdateHook()
 		CALL_MEMBER_FN(rightAimNode, UpdateNode)(&ctx);
 	}
 
-	{
+	{ // Update left magic aim node with additional rotation values
 		NiPoint3 euler = { *fMagicRotationPitch, 0.f, 0.f };
 		if (isCastingLeft || isDualCasting) {
 			euler.y = -Config::options.magicRotationRoll;
@@ -115,10 +132,46 @@ void PostMagicNodeUpdateHook()
 		CALL_MEMBER_FN(leftAimNode, UpdateNode)(&ctx);
 	}
 
+	{ // Update stored aiming directions for this frame after updating them
+		NiPoint3 secondaryForward = ForwardVector(secondaryMagicAimNode->m_worldTransform.rot);
+		g_secondaryAimVectors.pop_back();
+		g_secondaryAimVectors.push_front(secondaryForward);
+
+		NiPoint3 primaryForward = ForwardVector(primaryMagicAimNode->m_worldTransform.rot);
+		g_primaryAimVectors.pop_back();
+		g_primaryAimVectors.push_front(primaryForward);
+	}
+
 	// Dualcast state updates
 	if (state == DualCastState::Idle) {
-		if (isDualCasting) {
-			savedState.secondaryMagicAimNodeLocalTransform = secondaryMagicAimNode->m_localTransform;
+		if (!isDualCasting) {
+			NiAVObject::ControllerUpdateContext ctx{ 0, 0 };
+
+			{ // Secondary aim node update with smoothed direction
+				NiPoint3 forward = GetSmoothedVector(g_secondaryAimVectors, Config::options.numSmootingFramesNormal);
+
+				NiPoint3 worldUp = { 0, 0, 1 };
+				NiMatrix33 rot; MatrixFromForwardVector(&rot, &forward, &worldUp);
+				NiTransform transform = secondaryMagicAimNode->m_worldTransform;
+				transform.rot = rot;
+
+				UpdateNodeTransformLocal(secondaryMagicAimNode, transform);
+				CALL_MEMBER_FN(secondaryMagicAimNode, UpdateNode)(&ctx);
+			}
+
+			{ // Primary aim node update with smoothed direction
+				NiPoint3 forward = GetSmoothedVector(g_primaryAimVectors, Config::options.numSmootingFramesNormal);
+
+				NiPoint3 worldUp = { 0, 0, 1 };
+				NiMatrix33 rot; MatrixFromForwardVector(&rot, &forward, &worldUp);
+				NiTransform transform = primaryMagicAimNode->m_worldTransform;
+				transform.rot = rot;
+
+				UpdateNodeTransformLocal(primaryMagicAimNode, transform);
+				CALL_MEMBER_FN(primaryMagicAimNode, UpdateNode)(&ctx);
+			}
+		}
+		else { // Dual casting
 			savedState.secondaryMagicOffsetNodeLocalTransform = secondaryMagicOffsetNode->m_localTransform;
 			savedState.currentDualCastScale = 1.f;
 
@@ -128,15 +181,12 @@ void PostMagicNodeUpdateHook()
 	if (state == DualCastState::Cast) {
 		if (!isDualCasting) {
 			NiAVObject::ControllerUpdateContext ctx{ 0, 0 };
-			secondaryMagicAimNode->m_localTransform = savedState.secondaryMagicAimNodeLocalTransform;
-			CALL_MEMBER_FN(secondaryMagicAimNode, UpdateNode)(&ctx);
-
 			secondaryMagicOffsetNode->m_localTransform = savedState.secondaryMagicOffsetNodeLocalTransform;
 			CALL_MEMBER_FN(secondaryMagicOffsetNode, UpdateNode)(&ctx);
 
 			state = DualCastState::Idle;
 		}
-		else {
+		else { // Dual casting
 			{
 				float distanceBetweenHands = VectorLength(secondaryMagicOffsetNode->m_worldTransform.pos - primaryMagicOffsetNode->m_worldTransform.pos);
 				float minScale = Config::options.dualCastMinSpellScale;
@@ -171,26 +221,22 @@ void PostMagicNodeUpdateHook()
 
 			// Aim node update
 			{
-				// First give us the original direction the left hand would be pointing,
-				// since the game actually doesn't reset the rotation of the magic aim node like it does with the position
-				secondaryMagicAimNode->m_localTransform = savedState.secondaryMagicAimNodeLocalTransform;
-				NiAVObject::ControllerUpdateContext ctx{ 0, 0 };
-				CALL_MEMBER_FN(secondaryMagicAimNode, UpdateNode)(&ctx);
+				int numSmoothingFrames = isTwoHandedSpell ? Config::options.numSmootingFramesMaster : Config::options.numSmootingFramesDual;
+				NiPoint3 secondaryForward = GetSmoothedVector(g_secondaryAimVectors, numSmoothingFrames);
+				NiPoint3 primaryForward = GetSmoothedVector(g_primaryAimVectors, numSmoothingFrames);
 
 				NiPoint3 forward;
 				if (Config::options.useMainHandForDualCastAiming && !Config::options.useOffHandForDualCastAiming) {
 					// Main hand only
-					forward = ForwardVector(primaryMagicAimNode->m_worldTransform.rot);
+					forward = secondaryForward;
 				}
 				else if (Config::options.useOffHandForDualCastAiming && !Config::options.useMainHandForDualCastAiming) {
 					// Offhand only
-					forward = ForwardVector(secondaryMagicAimNode->m_worldTransform.rot);
+					forward = primaryForward;
 				}
 				else {
 					// Combine both hands
-					// TODO: Maybe just a lerp is close enough?
-					NiPoint3 secondaryForward = ForwardVector(secondaryMagicAimNode->m_worldTransform.rot);
-					NiPoint3 primaryForward = ForwardVector(primaryMagicAimNode->m_worldTransform.rot);
+
 					float angle = acosf(std::clamp(DotProduct(primaryForward, secondaryForward), -1.f, 1.f)); // clamp input of acos to be safe
 					NiPoint3 axis = VectorNormalized(CrossProduct(primaryForward, secondaryForward));
 
@@ -206,6 +252,7 @@ void PostMagicNodeUpdateHook()
 				transform.pos = midpoint;
 
 				UpdateNodeTransformLocal(secondaryMagicAimNode, transform);
+				NiAVObject::ControllerUpdateContext ctx{ 0, 0 };
 				CALL_MEMBER_FN(secondaryMagicAimNode, UpdateNode)(&ctx);
 			}
 		}
