@@ -81,6 +81,8 @@ namespace Config {
 		if (!ReadFloat("MagicRotationRoll", options.magicRotationRoll)) return false;
 		if (!ReadFloat("MagicRotationYaw", options.magicRotationYaw)) return false;
 
+		if (!ReadBool("hidePrimaryMagicNode", options.hidePrimaryMagicNode)) return false;
+
 		if (!ReadBool("UseOffHandForDualCastAiming", options.useOffHandForDualCastAiming)) return false;
 		if (!ReadBool("UseMainHandForDualCastAiming", options.useMainHandForDualCastAiming)) return false;
 

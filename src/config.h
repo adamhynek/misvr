@@ -17,6 +17,8 @@ namespace Config {
 		float magicRotationRoll = 0.f;
 		float magicRotationYaw = 0.f;
 
+		bool hidePrimaryMagicNode = false;
+
 		bool useOffHandForDualCastAiming = false;
 		bool useMainHandForDualCastAiming = false;
 	};

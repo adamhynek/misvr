@@ -81,12 +81,15 @@ void PostMagicNodeUpdateHook()
 	NiAVObject *leftAimNode = isLeftHanded ? primaryMagicAimNode : secondaryMagicAimNode;
 	NiAVObject *rightAimNode = isLeftHanded ? secondaryMagicAimNode : primaryMagicAimNode;
 
-	bool isDualCasting = IsDualCasting(player);
-
 	bool isCastingPrimary = IsCastingRight(player);
 	bool isCastingSecondary = IsCastingLeft(player);
 	bool isCastingLeft = isLeftHanded ? isCastingPrimary : isCastingSecondary;
 	bool isCastingRight = isLeftHanded ? isCastingSecondary : isCastingPrimary;
+
+	SpellItem* primarySpell = GetEquippedSpell(player, false);
+	bool isTwoHandedSpell = primarySpell && get_vfunc<_SpellItem_IsTwoHanded>(primarySpell, 0x67)(primarySpell);
+
+	bool isDualCasting = IsDualCasting(player) || (isTwoHandedSpell && isCastingRight && isCastingLeft);
 
 	{
 		NiPoint3 euler = { *fMagicRotationPitch, 0.f, 0.f };
@@ -134,16 +137,18 @@ void PostMagicNodeUpdateHook()
 			state = DualCastState::Idle;
 		}
 		else {
-			// Secondary offset node update
 			{
-				NiTransform transform = secondaryMagicOffsetNode->m_worldTransform;
-				transform.pos = midpoint;
-
 				float distanceBetweenHands = VectorLength(secondaryMagicOffsetNode->m_worldTransform.pos - primaryMagicOffsetNode->m_worldTransform.pos);
 				float minScale = Config::options.dualCastMinSpellScale;
 				float maxScale = Config::options.dualCastMaxSpellScale;
 				float scale = std::clamp(minScale + distanceBetweenHands / Config::options.dualCastHandSeparationScalingDistance, minScale, maxScale);
 				savedState.currentDualCastScale = scale;
+			}
+
+			// Secondary offset node update
+			{
+				NiTransform transform = secondaryMagicOffsetNode->m_worldTransform;
+				transform.pos = midpoint;
 
 				UpdateNodeTransformLocal(secondaryMagicOffsetNode, transform);
 				NiAVObject::ControllerUpdateContext ctx{ 0, 0 };
@@ -152,9 +157,13 @@ void PostMagicNodeUpdateHook()
 
 			// Primary offset node update
 			{
-				// Move the primary node way below us to hide it
 				NiTransform transform = primaryMagicOffsetNode->m_worldTransform;
-				transform.pos = midpoint + NiPoint3(0, 0, -10000);
+				transform.pos = midpoint;
+				if (Config::options.hidePrimaryMagicNode) {
+					// Move the primary node way below us to hide it
+					transform.pos += NiPoint3(0, 0, -10000);
+				}
+
 				UpdateNodeTransformLocal(primaryMagicOffsetNode, transform);
 				NiAVObject::ControllerUpdateContext ctx{ 0, 0 };
 				CALL_MEMBER_FN(primaryMagicOffsetNode, UpdateNode)(&ctx);
@@ -238,9 +247,9 @@ void PostWandUpdateHook()
 		SetParticleScaleDownstream(primaryMagicOffsetNode, magickaScale);
 	}
 	if (state == DualCastState::Cast) {
-		// Secondary offset node update
 		float scale = magickaScale * savedState.currentDualCastScale;
 		SetParticleScaleDownstream(secondaryMagicOffsetNode, scale);
+		SetParticleScaleDownstream(primaryMagicOffsetNode, scale);
 	}
 }
 

@@ -5,7 +5,16 @@
 
 
 typedef bool(*IAnimationGraphManagerHolder_GetGraphVariableInt)(IAnimationGraphManagerHolder *_this, const BSFixedString& a_variableName, SInt32& a_out);
-typedef bool(*IAnimationGraphManagerHolder_GetGraphVariableBool)(IAnimationGraphManagerHolder *_this, const BSFixedString& a_variableName, bool& a_out);
+typedef bool(*IAnimationGraphManagerHolder_GetGraphVariableBool)(IAnimationGraphManagerHolder* _this, const BSFixedString& a_variableName, bool& a_out);
+typedef bool(*_SpellItem_IsTwoHanded)(SpellItem *_this);
+
+inline UInt64* get_vtbl(void* object) { return *((UInt64**)object); }
+
+template<typename T>
+inline T get_vfunc(void* object, UInt64 index) {
+	UInt64* vtbl = get_vtbl(object);
+	return (T)(vtbl[index]);
+}
 
 inline NiTransform InverseTransform(const NiTransform &t) { NiTransform inverse; t.Invert(inverse); return inverse; }
 inline float VectorLengthSquared(const NiPoint3 &vec) { return vec.x*vec.x + vec.y*vec.y + vec.z*vec.z; }
