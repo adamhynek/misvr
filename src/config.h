@@ -19,9 +19,12 @@ namespace Config {
 
 		bool hidePrimaryMagicNode = false;
 
-		int numSmootingFramesNormal = 10;
-		int numSmootingFramesDual = 20;
-		int numSmootingFramesMaster = 40;
+		int numSmoothingFramesNovice = 10;
+		int numSmoothingFramesApprentice = 15;
+		int numSmoothingFramesAdept = 20;
+		int numSmoothingFramesExpert = 25;
+		int numSmoothingFramesMaster = 40;
+		float smoothingDualCastMultiplier = 1.25;
 
 		bool useOffHandForDualCastAiming = false;
 		bool useMainHandForDualCastAiming = false;

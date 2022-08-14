@@ -1,4 +1,5 @@
 #include "skse64/GameRTTI.h"
+#include "skse64/PapyrusSpell.h"
 
 #include "utils.h"
 #include "RE.h"
@@ -98,4 +99,28 @@ SpellItem *GetEquippedSpell(Actor *actor, bool isOffhand)
 		return DYNAMIC_CAST(form, TESForm, SpellItem);
 	}
 	return nullptr;
+}
+
+SpellSkillLevel GetSpellSkillLevel(SpellItem* spell)
+{
+	MagicItem::EffectItem* effectItem = nullptr;
+	if (spell->effectItemList.GetNthItem(magicItemUtils::GetCostliestEffectIndex(spell), effectItem)) {
+		if (EffectSetting* effect = effectItem->mgef) {
+			UInt32 skillLevel = effect->properties.level;
+			if (skillLevel >= 100) {
+				return SpellSkillLevel::Master;
+			}
+			if (skillLevel >= 75) {
+				return SpellSkillLevel::Expert;
+			}
+			if (skillLevel >= 50) {
+				return SpellSkillLevel::Adept;
+			}
+			if (skillLevel >= 25) {
+				return SpellSkillLevel::Apprentice;
+			}
+		}
+	}
+
+	return SpellSkillLevel::Novice;
 }

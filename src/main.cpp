@@ -40,6 +40,8 @@ typedef NiMatrix33 * (*_EulerToNiMatrix)(NiMatrix33 *out, float pitch, float rol
 RelocAddr<_EulerToNiMatrix> EulerToNiMatrix(0xC995A0);
 inline NiMatrix33 EulerToMatrix(float pitch, float roll, float yaw) { NiMatrix33 out; EulerToNiMatrix(&out, pitch, roll, yaw); return out; }
 
+RelocPtr<float> g_deltaTime(0x30C3A08);
+
 RelocPtr<float> fMagicRotationPitch(0x1EAEB00);
 
 
@@ -54,9 +56,6 @@ struct SavedState {
 	float currentDualCastScale;
 };
 SavedState savedState;
-
-SpellItem *currentMainHandSpell = nullptr;
-SpellItem *currentOffHandSpell = nullptr;
 
 std::deque<NiPoint3> g_primaryAimVectors{ 100, NiPoint3() };
 std::deque<NiPoint3> g_secondaryAimVectors{ 100, NiPoint3() };
@@ -73,6 +72,34 @@ NiPoint3 GetSmoothedVector(std::deque<NiPoint3> &vectors, int numFrames)
 	}
 
 	return VectorNormalized(smoothedVector);
+}
+
+int GetNumSmoothingFramesForSpell(SpellItem *spell, bool isDualCasting)
+{
+	int numSmoothingFrames;
+	SpellSkillLevel spellLevel = GetSpellSkillLevel(spell);
+	switch (spellLevel) {
+	case SpellSkillLevel::Master:
+		numSmoothingFrames = Config::options.numSmoothingFramesMaster;
+		break;
+	case SpellSkillLevel::Expert:
+		numSmoothingFrames = Config::options.numSmoothingFramesExpert;
+		break;
+	case SpellSkillLevel::Adept:
+		numSmoothingFrames = Config::options.numSmoothingFramesAdept;
+		break;
+	case SpellSkillLevel::Apprentice:
+		numSmoothingFrames = Config::options.numSmoothingFramesApprentice;
+		break;
+	default:
+		numSmoothingFrames = Config::options.numSmoothingFramesNovice;
+	}
+
+	float smoothingMultiplier = 0.011f / *g_deltaTime; // Half the number of frames at 45fps compared to 90fps, etc.
+	if (isDualCasting) {
+		smoothingMultiplier *= Config::options.smoothingDualCastMultiplier;
+	}
+	return round(float(numSmoothingFrames) * smoothingMultiplier);
 }
 
 void PostMagicNodeUpdateHook()
@@ -102,6 +129,7 @@ void PostMagicNodeUpdateHook()
 	bool isCastingRight = isLeftHanded ? isCastingSecondary : isCastingPrimary;
 
 	SpellItem* primarySpell = GetEquippedSpell(player, false);
+	SpellItem* secondarySpell = GetEquippedSpell(player, true);
 	bool isTwoHandedSpell = primarySpell && get_vfunc<_SpellItem_IsTwoHanded>(primarySpell, 0x67)(primarySpell);
 
 	bool isDualCasting = IsDualCasting(player) || (isTwoHandedSpell && isCastingRight && isCastingLeft);
@@ -147,8 +175,8 @@ void PostMagicNodeUpdateHook()
 		if (!isDualCasting) {
 			NiAVObject::ControllerUpdateContext ctx{ 0, 0 };
 
-			{ // Secondary aim node update with smoothed direction
-				NiPoint3 forward = GetSmoothedVector(g_secondaryAimVectors, Config::options.numSmootingFramesNormal);
+			if (secondarySpell) { // Secondary aim node update with smoothed direction
+				NiPoint3 forward = GetSmoothedVector(g_secondaryAimVectors, GetNumSmoothingFramesForSpell(secondarySpell, false));
 
 				NiPoint3 worldUp = { 0, 0, 1 };
 				NiMatrix33 rot; MatrixFromForwardVector(&rot, &forward, &worldUp);
@@ -159,8 +187,10 @@ void PostMagicNodeUpdateHook()
 				CALL_MEMBER_FN(secondaryMagicAimNode, UpdateNode)(&ctx);
 			}
 
-			{ // Primary aim node update with smoothed direction
-				NiPoint3 forward = GetSmoothedVector(g_primaryAimVectors, Config::options.numSmootingFramesNormal);
+			if (primarySpell) { // Primary aim node update with smoothed direction
+				SpellSkillLevel spellLevel = GetSpellSkillLevel(primarySpell);
+
+				NiPoint3 forward = GetSmoothedVector(g_primaryAimVectors, GetNumSmoothingFramesForSpell(primarySpell, false));
 
 				NiPoint3 worldUp = { 0, 0, 1 };
 				NiMatrix33 rot; MatrixFromForwardVector(&rot, &forward, &worldUp);
@@ -221,7 +251,7 @@ void PostMagicNodeUpdateHook()
 
 			// Aim node update
 			{
-				int numSmoothingFrames = isTwoHandedSpell ? Config::options.numSmootingFramesMaster : Config::options.numSmootingFramesDual;
+				int numSmoothingFrames = GetNumSmoothingFramesForSpell(secondarySpell, true);
 				NiPoint3 secondaryForward = GetSmoothedVector(g_secondaryAimVectors, numSmoothingFrames);
 				NiPoint3 primaryForward = GetSmoothedVector(g_primaryAimVectors, numSmoothingFrames);
 
@@ -312,42 +342,18 @@ void PerformHooks()
 			{
 				Xbyak::Label jumpBack, ret;
 
-				push(rax);
 				push(rcx);
-				push(rdx);
-				push(r8);
-				push(r9);
-				push(r10);
-				push(r11);
-				sub(rsp, 0x68); // Need to keep the stack 16 byte aligned
-				movsd(ptr[rsp], xmm0);
-				movsd(ptr[rsp + 0x10], xmm1);
-				movsd(ptr[rsp + 0x20], xmm2);
-				movsd(ptr[rsp + 0x30], xmm3);
-				movsd(ptr[rsp + 0x40], xmm4);
-				movsd(ptr[rsp + 0x50], xmm5);
+				sub(rsp, 0x28); // Need to keep the stack 16 byte aligned
 
 				// Call our hook
 				mov(rax, (uintptr_t)PostMagicNodeUpdateHook);
 				call(rax);
 
-				movsd(xmm0, ptr[rsp]);
-				movsd(xmm1, ptr[rsp + 0x10]);
-				movsd(xmm2, ptr[rsp + 0x20]);
-				movsd(xmm3, ptr[rsp + 0x30]);
-				movsd(xmm4, ptr[rsp + 0x40]);
-				movsd(xmm5, ptr[rsp + 0x50]);
-				add(rsp, 0x68);
-				pop(r11);
-				pop(r10);
-				pop(r9);
-				pop(r8);
-				pop(rdx);
+				add(rsp, 0x28);
 				pop(rcx);
-				pop(rax);
 
 				// Original code
-				mov(rax, postMagicNodeUpdateHookedFuncAddr);
+				mov(rax, postMagicNodeUpdateHookedFuncAddr); // TESRace::IsBeast()
 				call(rax);
 
 				// Jump back to whence we came (+ the size of the initial branch instruction)
@@ -373,39 +379,19 @@ void PerformHooks()
 			{
 				Xbyak::Label jumpBack, ret;
 
-				push(rax);
 				push(rcx);
 				push(rdx);
 				push(r8);
-				push(r9);
-				push(r10);
-				push(r11);
-				sub(rsp, 0x68); // Need to keep the stack 16 byte aligned
-				movsd(ptr[rsp], xmm0);
-				movsd(ptr[rsp + 0x10], xmm1);
-				movsd(ptr[rsp + 0x20], xmm2);
-				movsd(ptr[rsp + 0x30], xmm3);
-				movsd(ptr[rsp + 0x40], xmm4);
-				movsd(ptr[rsp + 0x50], xmm5);
+				sub(rsp, 0x28); // Need to keep the stack 16 byte aligned
 
 				// Call our hook
 				mov(rax, (uintptr_t)PostWandUpdateHook);
 				call(rax);
 
-				movsd(xmm0, ptr[rsp]);
-				movsd(xmm1, ptr[rsp + 0x10]);
-				movsd(xmm2, ptr[rsp + 0x20]);
-				movsd(xmm3, ptr[rsp + 0x30]);
-				movsd(xmm4, ptr[rsp + 0x40]);
-				movsd(xmm5, ptr[rsp + 0x50]);
-				add(rsp, 0x68);
-				pop(r11);
-				pop(r10);
-				pop(r9);
+				add(rsp, 0x28);
 				pop(r8);
 				pop(rdx);
 				pop(rcx);
-				pop(rax);
 
 				// Original code
 				mov(rax, postWandUpdateHookedFuncAddr);

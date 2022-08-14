@@ -35,4 +35,13 @@ bool IsCastingLeft(Actor *actor);
 bool IsDualCasting(Actor *actor);
 SpellItem *GetEquippedSpell(Actor *actor, bool isOffhand);
 
+enum class SpellSkillLevel {
+	Novice,
+	Apprentice,
+	Adept,
+	Expert,
+	Master,
+};
+SpellSkillLevel GetSpellSkillLevel(SpellItem* spell);
+
 void SetParticleScaleDownstream(NiAVObject *root, float scale);

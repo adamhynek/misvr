@@ -83,6 +83,13 @@ namespace Config {
 
 		if (!ReadBool("hidePrimaryMagicNode", options.hidePrimaryMagicNode)) return false;
 
+		if (!ReadInt("numSmoothingFramesNovice", options.numSmoothingFramesNovice)) return false;
+		if (!ReadInt("numSmoothingFramesApprentice", options.numSmoothingFramesApprentice)) return false;
+		if (!ReadInt("numSmoothingFramesAdept", options.numSmoothingFramesAdept)) return false;
+		if (!ReadInt("numSmoothingFramesExpert", options.numSmoothingFramesExpert)) return false;
+		if (!ReadInt("numSmoothingFramesMaster", options.numSmoothingFramesMaster)) return false;
+		if (!ReadFloat("smoothingDualCastMultiplier", options.smoothingDualCastMultiplier)) return false;
+
 		if (!ReadBool("UseOffHandForDualCastAiming", options.useOffHandForDualCastAiming)) return false;
 		if (!ReadBool("UseMainHandForDualCastAiming", options.useMainHandForDualCastAiming)) return false;
 
