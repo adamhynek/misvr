@@ -104,7 +104,7 @@ SpellItem *GetEquippedSpell(Actor *actor, bool isOffhand)
 SpellSkillLevel GetSpellSkillLevel(SpellItem* spell)
 {
 	MagicItem::EffectItem* effectItem = nullptr;
-	if (spell->effectItemList.GetNthItem(magicItemUtils::GetCostliestEffectIndex(spell), effectItem)) {
+	if (spell && spell->effectItemList.GetNthItem(magicItemUtils::GetCostliestEffectIndex(spell), effectItem)) {
 		if (EffectSetting* effect = effectItem->mgef) {
 			UInt32 skillLevel = effect->properties.level;
 			if (skillLevel >= 100) {

@@ -188,8 +188,6 @@ void PostMagicNodeUpdateHook()
 			}
 
 			if (primarySpell) { // Primary aim node update with smoothed direction
-				SpellSkillLevel spellLevel = GetSpellSkillLevel(primarySpell);
-
 				NiPoint3 forward = GetSmoothedVector(g_primaryAimVectors, GetNumSmoothingFramesForSpell(primarySpell, false));
 
 				NiPoint3 worldUp = { 0, 0, 1 };
@@ -251,7 +249,8 @@ void PostMagicNodeUpdateHook()
 
 			// Aim node update
 			{
-				int numSmoothingFrames = GetNumSmoothingFramesForSpell(secondarySpell, true);
+				SpellItem *spell = secondarySpell ? secondarySpell : primarySpell;
+				int numSmoothingFrames = GetNumSmoothingFramesForSpell(spell, true);
 				NiPoint3 secondaryForward = GetSmoothedVector(g_secondaryAimVectors, numSmoothingFrames);
 				NiPoint3 primaryForward = GetSmoothedVector(g_primaryAimVectors, numSmoothingFrames);
 
