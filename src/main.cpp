@@ -47,18 +47,37 @@ RelocPtr<float> fMagicRotationPitch(0x1EAEB00);
 
 enum class DualCastState {
 	Idle,
-	Cast
+	Cast,
 };
 DualCastState state = DualCastState::Idle;
 
 struct SavedState {
-	NiTransform secondaryMagicOffsetNodeLocalTransform;
 	float currentDualCastScale;
 };
 SavedState savedState;
 
-std::deque<NiPoint3> g_primaryAimVectors{ 100, NiPoint3() };
-std::deque<NiPoint3> g_secondaryAimVectors{ 100, NiPoint3() };
+enum class HandMergeState {
+	None,
+	PreMerge,
+	Merging,
+	Merged,
+	Unmerging,
+};
+HandMergeState mergeState = HandMergeState::None;
+
+struct SavedMergeState
+{
+	NiTransform primaryMagicOffsetNodeLocalTransform;
+	NiTransform secondaryMagicOffsetNodeLocalTransform;
+	NiTransform mergedPrimaryMagicOffsetNodeLocalTransform;
+	NiTransform mergedSecondaryMagicOffsetNodeLocalTransform;
+	float mergeTimeElapsed;
+	float mergeTimeTotal;
+};
+SavedMergeState g_savedMergeState;
+
+std::deque<NiPoint3> g_primaryAimVectors{ 500, NiPoint3() };
+std::deque<NiPoint3> g_secondaryAimVectors{ 500, NiPoint3() };
 NiPoint3 GetSmoothedVector(std::deque<NiPoint3> &vectors, int numFrames)
 {
 	NiPoint3 smoothedVector = NiPoint3();
@@ -74,10 +93,10 @@ NiPoint3 GetSmoothedVector(std::deque<NiPoint3> &vectors, int numFrames)
 	return VectorNormalized(smoothedVector);
 }
 
-int GetNumSmoothingFramesForSpell(SpellItem *spell, bool isDualCasting)
+int GetNumSmoothingFramesForEffect(EffectSetting *effect, bool isDualCasting)
 {
 	int numSmoothingFrames;
-	SpellSkillLevel spellLevel = GetSpellSkillLevel(spell);
+	SpellSkillLevel spellLevel = GetEffectSkillLevel(effect);
 	switch (spellLevel) {
 	case SpellSkillLevel::Master:
 		numSmoothingFrames = Config::options.numSmoothingFramesMaster;
@@ -130,7 +149,7 @@ void PostMagicNodeUpdateHook()
 
 	SpellItem* primarySpell = GetEquippedSpell(player, false);
 	SpellItem* secondarySpell = GetEquippedSpell(player, true);
-	bool isTwoHandedSpell = primarySpell && get_vfunc<_SpellItem_IsTwoHanded>(primarySpell, 0x67)(primarySpell);
+	bool isTwoHandedSpell = (primarySpell && get_vfunc<_SpellItem_IsTwoHanded>(primarySpell, 0x67)(primarySpell)) || (secondarySpell && get_vfunc<_SpellItem_IsTwoHanded>(secondarySpell, 0x67)(secondarySpell));
 
 	bool isDualCasting = IsDualCasting(player) || (isTwoHandedSpell && isCastingRight && isCastingLeft);
 
@@ -176,7 +195,8 @@ void PostMagicNodeUpdateHook()
 			NiAVObject::ControllerUpdateContext ctx{ 0, 0 };
 
 			if (secondarySpell) { // Secondary aim node update with smoothed direction
-				NiPoint3 forward = GetSmoothedVector(g_secondaryAimVectors, GetNumSmoothingFramesForSpell(secondarySpell, false));
+				EffectSetting *secondaryEffect = GetCostliestEffect(secondarySpell);
+				NiPoint3 forward = GetSmoothedVector(g_secondaryAimVectors, GetNumSmoothingFramesForEffect(secondaryEffect, false));
 
 				NiPoint3 worldUp = { 0, 0, 1 };
 				NiMatrix33 rot; MatrixFromForwardVector(&rot, &forward, &worldUp);
@@ -188,7 +208,8 @@ void PostMagicNodeUpdateHook()
 			}
 
 			if (primarySpell) { // Primary aim node update with smoothed direction
-				NiPoint3 forward = GetSmoothedVector(g_primaryAimVectors, GetNumSmoothingFramesForSpell(primarySpell, false));
+				EffectSetting *primaryEffect = GetCostliestEffect(primarySpell);
+				NiPoint3 forward = GetSmoothedVector(g_primaryAimVectors, GetNumSmoothingFramesForEffect(primaryEffect, false));
 
 				NiPoint3 worldUp = { 0, 0, 1 };
 				NiMatrix33 rot; MatrixFromForwardVector(&rot, &forward, &worldUp);
@@ -200,57 +221,43 @@ void PostMagicNodeUpdateHook()
 			}
 		}
 		else { // Dual casting
-			savedState.secondaryMagicOffsetNodeLocalTransform = secondaryMagicOffsetNode->m_localTransform;
+			g_savedMergeState.primaryMagicOffsetNodeLocalTransform = primaryMagicOffsetNode->m_localTransform;
+			g_savedMergeState.secondaryMagicOffsetNodeLocalTransform = secondaryMagicOffsetNode->m_localTransform;
+			mergeState = HandMergeState::PreMerge;
+			
 			savedState.currentDualCastScale = 1.f;
-
 			state = DualCastState::Cast;
 		}
 	}
 	if (state == DualCastState::Cast) {
 		if (!isDualCasting) {
-			NiAVObject::ControllerUpdateContext ctx{ 0, 0 };
-			secondaryMagicOffsetNode->m_localTransform = savedState.secondaryMagicOffsetNodeLocalTransform;
-			CALL_MEMBER_FN(secondaryMagicOffsetNode, UpdateNode)(&ctx);
+			if (mergeState == HandMergeState::Merging || mergeState == HandMergeState::Merged) {
+				// Start un-merging the effects
+				g_savedMergeState.mergeTimeElapsed = 0.f;
+				mergeState = HandMergeState::Unmerging;
+			}
+			else {
+				mergeState = HandMergeState::None;
+			}
 
 			state = DualCastState::Idle;
 		}
 		else { // Dual casting
 			{
 				float distanceBetweenHands = VectorLength(secondaryMagicOffsetNode->m_worldTransform.pos - primaryMagicOffsetNode->m_worldTransform.pos);
-				float minScale = Config::options.dualCastMinSpellScale;
-				float maxScale = Config::options.dualCastMaxSpellScale;
-				float scale = std::clamp(minScale + distanceBetweenHands / Config::options.dualCastHandSeparationScalingDistance, minScale, maxScale);
+				float closeScale = Config::options.dualCastHandsCloseSpellScale;
+				float farScale = Config::options.dualCastHandsFarSpellScale;
+				float minScale = min(closeScale, farScale);
+				float maxScale = max(closeScale, farScale);
+				float scale = std::clamp(lerp(closeScale, farScale, distanceBetweenHands / Config::options.dualCastHandSeparationScalingDistance), minScale, maxScale);
 				savedState.currentDualCastScale = scale;
-			}
-
-			// Secondary offset node update
-			{
-				NiTransform transform = secondaryMagicOffsetNode->m_worldTransform;
-				transform.pos = midpoint;
-
-				UpdateNodeTransformLocal(secondaryMagicOffsetNode, transform);
-				NiAVObject::ControllerUpdateContext ctx{ 0, 0 };
-				CALL_MEMBER_FN(secondaryMagicOffsetNode, UpdateNode)(&ctx);
-			}
-
-			// Primary offset node update
-			{
-				NiTransform transform = primaryMagicOffsetNode->m_worldTransform;
-				transform.pos = midpoint;
-				if (Config::options.hidePrimaryMagicNode) {
-					// Move the primary node way below us to hide it
-					transform.pos += NiPoint3(0, 0, -10000);
-				}
-
-				UpdateNodeTransformLocal(primaryMagicOffsetNode, transform);
-				NiAVObject::ControllerUpdateContext ctx{ 0, 0 };
-				CALL_MEMBER_FN(primaryMagicOffsetNode, UpdateNode)(&ctx);
 			}
 
 			// Aim node update
 			{
-				SpellItem *spell = secondarySpell ? secondarySpell : primarySpell;
-				int numSmoothingFrames = GetNumSmoothingFramesForSpell(spell, true);
+				SpellItem *spell = primarySpell ? primarySpell : secondarySpell;
+				EffectSetting *effect = GetCostliestEffect(spell);
+				int numSmoothingFrames = GetNumSmoothingFramesForEffect(effect, true);
 				NiPoint3 secondaryForward = GetSmoothedVector(g_secondaryAimVectors, numSmoothingFrames);
 				NiPoint3 primaryForward = GetSmoothedVector(g_primaryAimVectors, numSmoothingFrames);
 
@@ -286,6 +293,118 @@ void PostMagicNodeUpdateHook()
 			}
 		}
 	}
+
+	{
+		NiTransform primaryOffsetTransform = primaryMagicOffsetNode->m_worldTransform;
+		NiTransform secondaryOffsetTransform = secondaryMagicOffsetNode->m_worldTransform;
+
+		if (MagicCaster* caster = GetMagicCaster(player, true)) { // left caster is used for dualcasting / ritual spells
+			MagicCaster::State castingState = MagicCaster::State(caster->state);
+
+			SpellItem *spell = primarySpell ? primarySpell : secondarySpell;
+			EffectSetting *effect = GetCostliestEffect(spell);
+
+			if (mergeState == HandMergeState::PreMerge) {
+				if (isTwoHandedSpell) {
+					// Two-handed spell -> ritual/master spell
+					if ((castingState == MagicCaster::State::kConcentrating || castingState == MagicCaster::State::kCharged) && IsTwoHandedEffectMergeable(effect)) {
+						// Merge the two-handed spell once it's charged and should be merged
+						g_savedMergeState.mergeTimeElapsed = 0.f;
+						g_savedMergeState.mergeTimeTotal = Config::options.spellMergeTime;
+						mergeState = HandMergeState::Merging;
+					}
+					else {
+						// offset nodes stay where they should be - no change
+					}
+				}
+				else {
+					// Not a two-handed spell -> regular dual-cast
+					g_savedMergeState.mergeTimeElapsed = 0.f;
+					if (Config::options.useCastingTimeForMergeTime) {
+						float castingTime = effect ? effect->properties.castingTime : 0.f;
+						g_savedMergeState.mergeTimeTotal = castingTime > 0.f ? castingTime : Config::options.spellMergeTime;
+					}
+					else {
+						g_savedMergeState.mergeTimeTotal = Config::options.spellMergeTime;
+					}
+					mergeState = HandMergeState::Merging;
+				}
+			}
+			if (mergeState == HandMergeState::Merging) {
+				g_savedMergeState.mergeTimeElapsed += *g_deltaTime; // slows properly with different sgtm values
+
+				float lerpAmount = g_savedMergeState.mergeTimeElapsed / g_savedMergeState.mergeTimeTotal;
+				if (lerpAmount >= 1.f) {
+					// Done merging
+					mergeState = HandMergeState::Merged;
+				}
+				else {
+					// lerp offset nodes from their regular positions to the midpoint
+					NiTransform normalSecondaryTransform = secondaryMagicOffsetNode->m_parent->m_worldTransform * g_savedMergeState.secondaryMagicOffsetNodeLocalTransform;
+					secondaryOffsetTransform.pos = lerp(normalSecondaryTransform.pos, midpoint, lerpAmount);
+
+					NiTransform normalPrimaryTransform = primaryMagicOffsetNode->m_parent->m_worldTransform * g_savedMergeState.primaryMagicOffsetNodeLocalTransform;
+					primaryOffsetTransform.pos = lerp(primaryOffsetTransform.pos, midpoint, lerpAmount);
+				}
+			}
+			if (mergeState == HandMergeState::Merged) {
+				// offset nodes go to the midpoint
+				secondaryOffsetTransform.pos = midpoint;
+				primaryOffsetTransform.pos = midpoint;
+			}
+			if (mergeState == HandMergeState::Unmerging) {
+				g_savedMergeState.mergeTimeElapsed += *g_deltaTime; // slows properly with different sgtm values
+
+				float lerpAmount = g_savedMergeState.mergeTimeElapsed / Config::options.spellUnMergeTime;
+				if (lerpAmount >= 1.f) {
+					// Done unmerging - restore original transforms
+					NiAVObject::ControllerUpdateContext ctx{ 0, 0 };
+					primaryMagicOffsetNode->m_localTransform = g_savedMergeState.primaryMagicOffsetNodeLocalTransform;
+					CALL_MEMBER_FN(primaryMagicOffsetNode, UpdateNode)(&ctx);
+					secondaryMagicOffsetNode->m_localTransform = g_savedMergeState.secondaryMagicOffsetNodeLocalTransform;
+					CALL_MEMBER_FN(secondaryMagicOffsetNode, UpdateNode)(&ctx);
+
+					mergeState = HandMergeState::None;
+				}
+				else {
+					// lerp offset nodes from their merged position back to their regular position
+					NiTransform normalSecondaryTransform = secondaryMagicOffsetNode->m_parent->m_worldTransform * g_savedMergeState.secondaryMagicOffsetNodeLocalTransform;
+					NiTransform mergedSecondaryTransform = secondaryMagicOffsetNode->m_parent->m_worldTransform * g_savedMergeState.mergedSecondaryMagicOffsetNodeLocalTransform;
+					secondaryOffsetTransform.pos = lerp(mergedSecondaryTransform.pos, normalSecondaryTransform.pos, lerpAmount);
+
+					NiTransform normalPrimaryTransform = primaryMagicOffsetNode->m_parent->m_worldTransform * g_savedMergeState.primaryMagicOffsetNodeLocalTransform;
+					NiTransform mergedPrimaryTransform = primaryMagicOffsetNode->m_parent->m_worldTransform * g_savedMergeState.mergedPrimaryMagicOffsetNodeLocalTransform;
+					primaryOffsetTransform.pos = lerp(mergedPrimaryTransform.pos, primaryOffsetTransform.pos, lerpAmount);
+				}
+			}
+		}
+		else {
+			secondaryOffsetTransform.pos = midpoint;
+			primaryOffsetTransform.pos = midpoint;
+		}
+
+		if (mergeState == HandMergeState::Merging || mergeState == HandMergeState::Merged || mergeState == HandMergeState::Unmerging) {
+			// Secondary offset node update
+			{
+				UpdateNodeTransformLocal(secondaryMagicOffsetNode, secondaryOffsetTransform);
+				NiAVObject::ControllerUpdateContext ctx{ 0, 0 };
+				CALL_MEMBER_FN(secondaryMagicOffsetNode, UpdateNode)(&ctx);
+			}
+
+			// Primary offset node update
+			{
+				UpdateNodeTransformLocal(primaryMagicOffsetNode, primaryOffsetTransform);
+				NiAVObject::ControllerUpdateContext ctx{ 0, 0 };
+				CALL_MEMBER_FN(primaryMagicOffsetNode, UpdateNode)(&ctx);
+			}
+
+			if (mergeState == HandMergeState::Merging || mergeState == HandMergeState::Merged) {
+				// Save these for when we unmerge, so that we have transforms to unmerge from
+				g_savedMergeState.mergedSecondaryMagicOffsetNodeLocalTransform = secondaryMagicOffsetNode->m_localTransform;
+				g_savedMergeState.mergedPrimaryMagicOffsetNodeLocalTransform = primaryMagicOffsetNode->m_localTransform;
+			}
+		}
+	}
 }
 
 
@@ -316,7 +435,7 @@ void PostWandUpdateHook()
 	// - stamina is 26
 	float magickaPercentage = Actor_GetActorValuePercentage(player, 25);
 	//_MESSAGE("Magicka percent: %.2f", magickaPercentage);
-	float magickaScale = minScale + (maxScale - minScale) * magickaPercentage;
+	float magickaScale = lerp(minScale, maxScale, magickaPercentage);
 
 	if (state == DualCastState::Idle) {
 		SetParticleScaleDownstream(secondaryMagicOffsetNode, magickaScale);

@@ -7,17 +7,19 @@
 namespace Config {
 	struct Options {
 		// Add config options for things: left / right / combined hand vectors for dualcast spell direction, min / max scale while dual casting along with hand - hand distance to scale over.
-		float dualCastMinSpellScale = 1.f;
-		float dualCastMaxSpellScale = 2.f;
+		float dualCastHandsCloseSpellScale = 1.f;
+		float dualCastHandsFarSpellScale = 2.f;
 		float dualCastHandSeparationScalingDistance = 90.f;
 
 		float spellScaleWhenMagickaEmpty = 0.35f;
 		float spellScaleWhenMagickaFull = 1.f;
 
+		bool useCastingTimeForMergeTime = true;
+		float spellMergeTime = 0.15f;
+		float spellUnMergeTime = 0.1f;
+
 		float magicRotationRoll = 0.f;
 		float magicRotationYaw = 0.f;
-
-		bool hidePrimaryMagicNode = false;
 
 		int numSmoothingFramesNovice = 10;
 		int numSmoothingFramesApprentice = 15;

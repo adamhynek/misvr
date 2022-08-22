@@ -71,8 +71,8 @@ namespace Config {
 
 	bool ReadConfigOptions()
 	{
-		if (!ReadFloat("DualCastMinSpellScale", options.dualCastMinSpellScale)) return false;
-		if (!ReadFloat("DualCastMaxSpellScale", options.dualCastMaxSpellScale)) return false;
+		if (!ReadFloat("dualCastHandsCloseSpellScale", options.dualCastHandsCloseSpellScale)) return false;
+		if (!ReadFloat("dualCastHandsFarSpellScale", options.dualCastHandsFarSpellScale)) return false;
 		if (!ReadFloat("DualCastHandSeparationScalingDistance", options.dualCastHandSeparationScalingDistance)) return false;
 
 		if (!ReadFloat("SpellScaleWhenMagickaEmpty", options.spellScaleWhenMagickaEmpty)) return false;
@@ -80,8 +80,6 @@ namespace Config {
 
 		if (!ReadFloat("MagicRotationRoll", options.magicRotationRoll)) return false;
 		if (!ReadFloat("MagicRotationYaw", options.magicRotationYaw)) return false;
-
-		if (!ReadBool("hidePrimaryMagicNode", options.hidePrimaryMagicNode)) return false;
 
 		if (!ReadInt("numSmoothingFramesNovice", options.numSmoothingFramesNovice)) return false;
 		if (!ReadInt("numSmoothingFramesApprentice", options.numSmoothingFramesApprentice)) return false;

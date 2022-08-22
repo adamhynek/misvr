@@ -2,6 +2,9 @@
 
 #include "skse64/NiGeometry.h"
 #include "skse64/GameReferences.h"
+#include "skse64/PapyrusSpell.h"
+
+#include "RE.h"
 
 
 typedef bool(*IAnimationGraphManagerHolder_GetGraphVariableInt)(IAnimationGraphManagerHolder *_this, const BSFixedString& a_variableName, SInt32& a_out);
@@ -35,6 +38,17 @@ bool IsCastingLeft(Actor *actor);
 bool IsDualCasting(Actor *actor);
 SpellItem *GetEquippedSpell(Actor *actor, bool isOffhand);
 
+inline MagicCaster * GetMagicCaster(Actor *actor, bool isLeft) { return (MagicCaster *) (isLeft ? actor->unk1A0 : actor->unk1A8); }
+
+inline EffectSetting * GetCostliestEffect(SpellItem *spell)
+{
+	MagicItem::EffectItem *effectItem = nullptr;
+	if (spell && spell->effectItemList.GetNthItem(magicItemUtils::GetCostliestEffectIndex(spell), effectItem)) {
+		return effectItem->mgef;
+	}
+	return nullptr;
+}
+
 enum class SpellSkillLevel {
 	Novice,
 	Apprentice,
@@ -42,6 +56,7 @@ enum class SpellSkillLevel {
 	Expert,
 	Master,
 };
-SpellSkillLevel GetSpellSkillLevel(SpellItem* spell);
+SpellSkillLevel GetEffectSkillLevel(EffectSetting *effect);
+bool IsTwoHandedEffectMergeable(EffectSetting *effect);
 
 void SetParticleScaleDownstream(NiAVObject *root, float scale);

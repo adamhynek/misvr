@@ -22,6 +22,34 @@ struct NiTPointerList
 static_assert(sizeof(NiTPointerList<void *>) == 0x18);
 
 
+class MagicCaster
+{
+public:
+	enum class State
+	{
+		kNone = 0,
+		kCastStart = 1,
+		kCharging = 2,
+		kCharged = 3,
+		kReleased = 4,
+		kConcentrating = 6,
+	};
+
+	void *vtbl; // 00
+	tArray<UInt64> sounds; // 08
+	UInt32 desiredTarget; // 20
+	UInt32 pad24; // 24
+	MagicItem *currentSpell; // 28
+	UInt32 state; // 30
+	float castingTimer; // 34
+	float currentSpellCost; // 38
+	float magnitudeOverride; // 3C
+	float nextTargetUpdate; // 40
+	float projectileTimer; // 44
+};
+static_assert(sizeof(MagicCaster) == 0x48);
+
+
 struct NiParticleInfo
 {
 public:

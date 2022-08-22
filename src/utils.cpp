@@ -101,26 +101,38 @@ SpellItem *GetEquippedSpell(Actor *actor, bool isOffhand)
 	return nullptr;
 }
 
-SpellSkillLevel GetSpellSkillLevel(SpellItem* spell)
+SpellSkillLevel GetEffectSkillLevel(EffectSetting *effect)
 {
-	MagicItem::EffectItem* effectItem = nullptr;
-	if (spell && spell->effectItemList.GetNthItem(magicItemUtils::GetCostliestEffectIndex(spell), effectItem)) {
-		if (EffectSetting* effect = effectItem->mgef) {
-			UInt32 skillLevel = effect->properties.level;
-			if (skillLevel >= 100) {
-				return SpellSkillLevel::Master;
-			}
-			if (skillLevel >= 75) {
-				return SpellSkillLevel::Expert;
-			}
-			if (skillLevel >= 50) {
-				return SpellSkillLevel::Adept;
-			}
-			if (skillLevel >= 25) {
-				return SpellSkillLevel::Apprentice;
-			}
-		}
+	if (!effect) return SpellSkillLevel::Novice;
+
+	UInt32 skillLevel = effect->properties.level;
+	if (skillLevel >= 100) {
+		return SpellSkillLevel::Master;
+	}
+	if (skillLevel >= 75) {
+		return SpellSkillLevel::Expert;
+	}
+	if (skillLevel >= 50) {
+		return SpellSkillLevel::Adept;
+	}
+	if (skillLevel >= 25) {
+		return SpellSkillLevel::Apprentice;
 	}
 
 	return SpellSkillLevel::Novice;
+}
+
+bool IsTwoHandedEffectMergeable(EffectSetting *effect)
+{
+	if (!effect) return false;
+
+	UInt32 delivery = effect->properties.deliveryType;
+	UInt32 castType = effect->properties.castType;
+	if ((delivery == EffectSetting::Properties::kDeliveryType_Aimed || delivery == EffectSetting::Properties::kDeliveryType_TargetActor || delivery == EffectSetting::Properties::kDeliveryType_TargetLocation) &&
+		(castType == EffectSetting::Properties::kCastingType_FireAndForget || castType == EffectSetting::Properties::kCastingType_Concentration))
+	{
+		return true;
+	}
+
+	return false;
 }
