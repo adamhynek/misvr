@@ -14,7 +14,7 @@ namespace Config {
 		float spellScaleWhenMagickaEmpty = 0.35f;
 		float spellScaleWhenMagickaFull = 1.f;
 
-		bool useCastingTimeForMergeTime = true;
+		bool useCastingTimeForMergeTime = false;
 		float spellMergeTime = 0.15f;
 		float spellUnMergeTime = 0.1f;
 

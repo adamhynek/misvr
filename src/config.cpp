@@ -78,6 +78,10 @@ namespace Config {
 		if (!ReadFloat("SpellScaleWhenMagickaEmpty", options.spellScaleWhenMagickaEmpty)) return false;
 		if (!ReadFloat("SpellScaleWhenMagickaFull", options.spellScaleWhenMagickaFull)) return false;
 
+		if (!ReadBool("useCastingTimeForMergeTime", options.useCastingTimeForMergeTime)) return false;
+		if (!ReadFloat("spellMergeTime", options.spellMergeTime)) return false;
+		if (!ReadFloat("spellUnMergeTime", options.spellUnMergeTime)) return false;
+
 		if (!ReadFloat("MagicRotationRoll", options.magicRotationRoll)) return false;
 		if (!ReadFloat("MagicRotationYaw", options.magicRotationYaw)) return false;
 

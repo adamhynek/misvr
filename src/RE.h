@@ -27,6 +27,7 @@ class MagicCaster
 public:
 	enum class State
 	{
+		// Thank you Noah Boddie for REing this
 		kNone = 0,
 		kCastStart = 1,
 		kCharging = 2,
